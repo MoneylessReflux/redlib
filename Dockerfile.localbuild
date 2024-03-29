@@ -1,0 +1,42 @@
+FROM rust:alpine3.19 as build
+
+RUN apk add --no-cache gcc libc-dev
+
+COPY . /src
+
+WORKDIR /src
+
+RUN cargo build --release
+
+FROM alpine:3.19 as config
+
+RUN adduser --home /nonexistent --no-create-home --disabled-password redlib
+
+FROM scratch
+
+# Hosts file is needed so that localhost resolves
+COPY --from=config /etc/hosts /etc/hosts
+
+# Add user config
+COPY --from=config /etc/passwd /etc/passwd
+
+# Add SSL certificates
+COPY --from=config /etc/ssl /etc/ssl
+
+# Add wget and dependencies for healthcheck
+COPY --from=config /lib/ld-musl-x86_64.so.1 /lib/
+COPY --from=config /usr/bin/wget /usr/bin/wget
+
+# Add redlib binary
+COPY --from=build /src/target/release/redlib /usr/local/bin/
+
+USER redlib
+
+# Tell Docker to expose port 8080
+EXPOSE 8080
+
+# Run a healthcheck every minute to make sure redlib is functional
+HEALTHCHECK --interval=1m --timeout=3s CMD wget --spider --q http://localhost:8080/settings || exit 1
+
+CMD ["redlib"]
+
